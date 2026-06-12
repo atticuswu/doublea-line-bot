@@ -1,6 +1,7 @@
 .env
 credentials.json
 token.json
+chat_state.json
 __pycache__/
 *.pyc
 .DS_Store

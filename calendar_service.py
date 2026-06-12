@@ -1,40 +1,55 @@
-import base64
-import json
-import os
+from datetime import datetime, timedelta
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
+import pytz
 from googleapiclient.discovery import build
+
+from google_auth import get_credentials
 
 CALENDAR_ID = "atticus.wu@gmail.com"
 WIFE_EMAIL = "angelsu0923@gmail.com"
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+TAIPEI_TZ = pytz.timezone("Asia/Taipei")
 
 
-def _get_credentials() -> Credentials:
-    """Build OAuth credentials from GOOGLE_TOKEN_JSON env var (base64-encoded JSON)."""
-    raw = os.environ.get("GOOGLE_TOKEN_JSON", "")
-    if not raw:
-        raise EnvironmentError("GOOGLE_TOKEN_JSON environment variable is not set")
+def list_events_for_date(date: datetime) -> list[dict]:
+    """列出指定日期的所有行事曆事件（台北時間）。回傳 [{"title", "start_str"}, ...]"""
+    service = build("calendar", "v3", credentials=get_credentials())
 
-    token_data = json.loads(base64.b64decode(raw).decode("utf-8"))
+    # 當天 00:00 ~ 23:59:59
+    day_start = TAIPEI_TZ.localize(datetime(date.year, date.month, date.day, 0, 0, 0))
+    day_end = day_start + timedelta(days=1)
 
-    creds = Credentials(
-        token=None,
-        refresh_token=token_data["refresh_token"],
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=token_data["client_id"],
-        client_secret=token_data["client_secret"],
-        scopes=SCOPES,
+    result = (
+        service.events()
+        .list(
+            calendarId=CALENDAR_ID,
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        .execute()
     )
-    creds.refresh(Request())
-    return creds
+
+    events = []
+    for item in result.get("items", []):
+        title = item.get("summary", "（無標題）")
+        start = item["start"].get("dateTime") or item["start"].get("date", "")
+        if start:
+            try:
+                dt = datetime.fromisoformat(start)
+                start_str = dt.strftime("%H:%M")
+            except ValueError:
+                start_str = start
+        else:
+            start_str = ""
+        events.append({"title": title, "start_str": start_str})
+
+    return events
 
 
-def create_calendar_event(event_data: dict) -> str:
-    """Create a Google Calendar event and invite Angel. Returns the event HTML link."""
-    creds = _get_credentials()
-    service = build("calendar", "v3", credentials=creds)
+def create_calendar_event(event_data: dict) -> dict:
+    """Create a Google Calendar event and invite Angel. Returns {"id": ..., "link": ...}"""
+    service = build("calendar", "v3", credentials=get_credentials())
 
     body: dict = {
         "summary": event_data["title"],
@@ -57,4 +72,24 @@ def create_calendar_event(event_data: dict) -> str:
         .execute()
     )
 
-    return result.get("htmlLink", "")
+    return {"id": result["id"], "link": result.get("htmlLink", "")}
+
+
+def update_calendar_event(event_id: str, updates: dict) -> str:
+    """Update start/end of an existing event. Returns updated event HTML link."""
+    service = build("calendar", "v3", credentials=get_credentials())
+
+    event = service.events().get(calendarId=CALENDAR_ID, eventId=event_id).execute()
+
+    if updates.get("start"):
+        event["start"] = {"dateTime": updates["start"], "timeZone": "Asia/Taipei"}
+    if updates.get("end"):
+        event["end"] = {"dateTime": updates["end"], "timeZone": "Asia/Taipei"}
+
+    updated = (
+        service.events()
+        .update(calendarId=CALENDAR_ID, eventId=event_id, body=event, sendUpdates="all")
+        .execute()
+    )
+
+    return updated.get("htmlLink", "")

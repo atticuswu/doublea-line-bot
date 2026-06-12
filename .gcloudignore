@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.example
+__pycache__
+*.pyc
+*.pyo
+chat_state.json
+token.json
+credentials.json
+auth_setup.py
+SETUP.md
+Procfile
