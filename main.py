@@ -1,6 +1,9 @@
+import hashlib
+import hmac as _hmac
 import io
 import os
 import random
+import time
 import urllib.parse
 from datetime import datetime, timedelta
 
@@ -440,8 +443,17 @@ def process_message(text: str, chat_id: str, reply_token: str | None = None) -> 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/photo/{file_id}")
-async def serve_photo(file_id: str):
-    """將 Google Drive 照片串流給 LINE 伺服器。"""
+async def serve_photo(file_id: str, sig: str = "", expires: int = 0):
+    """將 Google Drive 照片串流給 LINE 伺服器（需 HMAC 簽章）。"""
+    secret = os.environ.get("PHOTO_SERVE_SECRET", os.environ.get("LINE_CHANNEL_SECRET", ""))
+    if not secret or not sig or not expires:
+        raise HTTPException(status_code=403, detail="Missing signature")
+    if time.time() > expires:
+        raise HTTPException(status_code=403, detail="Signature expired")
+    msg = f"{file_id}:{expires}".encode()
+    expected = _hmac.HMAC(secret.encode(), msg, hashlib.sha256).hexdigest()
+    if not _hmac.compare_digest(expected, sig):
+        raise HTTPException(status_code=403, detail="Invalid signature")
     creds = get_credentials()
     service = build_drive_service(creds)
     request = service.files().get_media(fileId=file_id)

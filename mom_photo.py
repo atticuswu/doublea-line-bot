@@ -1,6 +1,9 @@
+import hashlib
+import hmac as _hmac
 import os
 import random
 import time
+import time as _time_module
 
 from google_auth import get_credentials
 from googleapiclient.discovery import build as _gapi_build
@@ -18,10 +21,16 @@ FIRESTORE_COLLECTION = "doublea"
 CAROUSEL_DOC = "mom_photo_carousel"
 CAROUSEL_STATE_FILE = "mom_photo_carousel.json"
 
-ALLOWED_MIME = {"image/jpeg", "image/png"}
-
 _last_sent_at: float = 0.0
 _carousel_memory: dict = {}  # in-memory cache for carousel state
+
+
+def _make_photo_url(file_id: str) -> str:
+    secret = os.environ.get("PHOTO_SERVE_SECRET", os.environ.get("LINE_CHANNEL_SECRET", ""))
+    expires = int(_time_module.time()) + 3600  # 1 hour
+    msg = f"{file_id}:{expires}".encode()
+    sig = _hmac.HMAC(secret.encode(), msg, hashlib.sha256).hexdigest()
+    return f"{DOUBLEA_PUBLIC_URL}/photo/{file_id}?sig={sig}&expires={expires}"
 
 
 def is_mom(user_id: str) -> bool:
@@ -75,12 +84,18 @@ def _list_photo_files(service, folder_id: str) -> list[dict]:
         f"and (mimeType='image/jpeg' or mimeType='image/png') "
         f"and trashed=false"
     )
-    result = service.files().list(
-        q=query,
-        fields="files(id,name,mimeType)",
-        pageSize=200,
-    ).execute()
-    return result.get("files", [])
+    files = []
+    page_token = None
+    while True:
+        kwargs = dict(q=query, fields="nextPageToken,files(id,name,mimeType)", pageSize=200)
+        if page_token:
+            kwargs["pageToken"] = page_token
+        result = service.files().list(**kwargs).execute()
+        files.extend(result.get("files", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+    return files
 
 
 def get_next_photo_file_id(creds, folder_id: str) -> str:
@@ -123,7 +138,7 @@ def handle_mom_message(reply_token: str, line_api) -> bool:
     try:
         creds = get_credentials()
         file_id = get_next_photo_file_id(creds, DAUGHTER_PHOTOS_FOLDER_ID)
-        photo_url = f"{DOUBLEA_PUBLIC_URL}/photo/{file_id}"
+        photo_url = _make_photo_url(file_id)
         line_api.reply_message(
             ReplyMessageRequest(
                 reply_token=reply_token,

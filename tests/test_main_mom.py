@@ -1,5 +1,8 @@
 from unittest.mock import MagicMock, patch
+import hashlib
+import hmac as _hmac
 import io
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,9 +22,18 @@ class FakeMessageEvent(MessageEvent):
         object.__setattr__(self, '__dict__', {})
 
 
+def _make_test_sig(file_id: str, secret: str, expires: int) -> str:
+    msg = f"{file_id}:{expires}".encode()
+    return _hmac.HMAC(secret.encode(), msg, hashlib.sha256).hexdigest()
+
+
 def test_photo_endpoint_streams_image():
-    """GET /photo/{file_id} 應回傳圖片串流。"""
+    """GET /photo/{file_id} 應回傳圖片串流（需帶有效 HMAC sig）。"""
     fake_image = b"\xff\xd8\xff"  # JPEG magic bytes
+    secret = "test_secret"
+    file_id = "file_abc123"
+    expires = int(time.time()) + 3600
+    sig = _make_test_sig(file_id, secret, expires)
 
     mock_service = MagicMock()
     # MediaIoBaseDownload 寫入 buf 的 mock
@@ -36,12 +48,13 @@ def test_photo_endpoint_streams_image():
     mock_service.files().get_media.return_value = MagicMock()
     mock_service.files().get().execute.return_value = {"mimeType": "image/jpeg"}
 
-    with patch("main.build_drive_service", return_value=mock_service):
-        with patch("main.MediaIoBaseDownload", side_effect=fake_download):
-            with patch("main.get_credentials", return_value=MagicMock()):
-                from main import app
-                client = TestClient(app)
-                response = client.get("/photo/file_abc123")
+    with patch.dict("os.environ", {"PHOTO_SERVE_SECRET": secret}):
+        with patch("main.build_drive_service", return_value=mock_service):
+            with patch("main.MediaIoBaseDownload", side_effect=fake_download):
+                with patch("main.get_credentials", return_value=MagicMock()):
+                    from main import app
+                    client = TestClient(app)
+                    response = client.get(f"/photo/{file_id}?sig={sig}&expires={expires}")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/jpeg")
     assert response.content == fake_image
