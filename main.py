@@ -1,3 +1,4 @@
+import io
 import os
 import random
 import urllib.parse
@@ -6,7 +7,9 @@ from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from google_auth import get_credentials
+from googleapiclient.http import MediaIoBaseDownload
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     ApiClient,
@@ -20,6 +23,7 @@ from linebot.v3.webhook import WebhookParser
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 from calendar_service import create_calendar_event, list_events_for_date, update_calendar_event
+from mom_photo import build_drive_service, handle_mom_message, is_mom
 from event_parser import parse_message, parse_modification
 from state_service import (
     add_reminder,
@@ -435,6 +439,22 @@ def process_message(text: str, chat_id: str, reply_token: str | None = None) -> 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@app.get("/photo/{file_id}")
+async def serve_photo(file_id: str):
+    """將 Google Drive 照片串流給 LINE 伺服器。"""
+    creds = get_credentials()
+    service = build_drive_service(creds)
+    request = service.files().get_media(fileId=file_id)
+    buf = io.BytesIO()
+    downloader = MediaIoBaseDownload(buf, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    buf.seek(0)
+    meta = service.files().get(fileId=file_id, fields="mimeType").execute()
+    return StreamingResponse(buf, media_type=meta.get("mimeType", "image/jpeg"))
+
+
 @app.post("/webhook")
 async def webhook(request: Request, background_tasks: BackgroundTasks):
     signature = request.headers.get("X-Line-Signature", "")
@@ -445,6 +465,14 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     for event in events:
+        # 媽媽偵測：任意訊息類型都觸發，優先於其他 handler
+        if isinstance(event, MessageEvent):
+            user_id = getattr(event.source, "user_id", None) or ""
+            if is_mom(user_id):
+                with ApiClient(line_config) as api_client:
+                    handle_mom_message(event.reply_token, MessagingApi(api_client))
+                continue  # 跳過原本的 process_message
+
         if isinstance(event, MessageEvent) and isinstance(
             event.message, TextMessageContent
         ):
