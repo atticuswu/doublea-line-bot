@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac as _hmac
 import io
@@ -198,13 +199,25 @@ def send_event_reminder(chat_id: str, title: str, start_str: str) -> None:
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
-def handle_command(text: str, chat_id: str) -> bool:
+def handle_command(text: str, chat_id: str, reply_token: str | None = None) -> bool:
+    def _cmd_respond(msg: str) -> None:
+        if reply_token:
+            try:
+                _reply_line(reply_token, msg)
+                return
+            except Exception:
+                pass
+        try:
+            _push_line(chat_id, msg)
+        except Exception:
+            pass
+
     if text.strip() in ("待辦清單", "待辦", "todo", "TODO"):
         try:
             tasks = get_pending_tasks()
-            _push_line(chat_id, _format_todo_list(tasks))
+            _cmd_respond(_format_todo_list(tasks))
         except Exception as e:
-            _push_line(chat_id, f"⚠️ 無法取得待辦清單：{e}")
+            _cmd_respond(f"⚠️ 無法取得待辦清單：{e}")
         return True
 
     if text.startswith("完成 ") or text.startswith("done "):
@@ -215,9 +228,9 @@ def handle_command(text: str, chat_id: str) -> bool:
                 msg = f"✅ 已完成：【{title}】\n\n{_cheer_complete()}"
             else:
                 msg = f"❓ 找不到包含「{keyword}」的待辦事項"
-            _push_line(chat_id, msg)
+            _cmd_respond(msg)
         except Exception as e:
-            _push_line(chat_id, f"⚠️ 標記失敗：{e}")
+            _cmd_respond(f"⚠️ 標記失敗：{e}")
         return True
 
     if text.lower().startswith("del "):
@@ -228,11 +241,11 @@ def handle_command(text: str, chat_id: str) -> bool:
                 msg = f"✅ 已完成：【{title}】\n\n{_cheer_complete()}"
             else:
                 msg = f"❓ 找不到第 {n} 項待辦事項"
-            _push_line(chat_id, msg)
+            _cmd_respond(msg)
         except ValueError:
-            _push_line(chat_id, "❓ 格式錯誤，請輸入「del 1」")
+            _cmd_respond("❓ 格式錯誤，請輸入「del 1」")
         except Exception as e:
-            _push_line(chat_id, f"⚠️ 標記失敗：{e}")
+            _cmd_respond(f"⚠️ 標記失敗：{e}")
         return True
 
     return False
@@ -290,7 +303,7 @@ def _fix_event_times(ev: dict) -> None:
         pass
 
 
-# ── Quick pre-filter ──────────────────────────────────────────────────────────
+# ── Quick pre-filter（只判斷是否送「⏳」，不影響 Gemini 處理）────────────────
 
 _TIME_KEYWORDS = [
     "今天", "明天", "後天", "大後天",
@@ -298,8 +311,7 @@ _TIME_KEYWORDS = [
     "週一", "週二", "週三", "週四", "週五", "週六", "週日",
     "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日",
     "早上", "上午", "中午", "下午", "晚上", "凌晨",
-    "點鐘", "點半", "幾點", "時候",
-    "月", "號",
+    "點鐘", "點半", "幾點", "時候", "月", "號",
 ]
 _TASK_KEYWORDS = [
     "記得", "要去", "要買", "要訂", "幫我", "幫你", "幫忙",
@@ -312,13 +324,10 @@ _MODIFY_KEYWORDS = ["修正", "更改", "改一下", "調整", "修改", "改成
 
 
 def _should_notify(text: str) -> bool:
-    """本地快速判斷：是否有可能是行事曆/待辦/修改，值得先推送等待訊息。"""
     for kw in _MODIFY_KEYWORDS:
         if kw in text:
             return True
-    time_hit = any(kw in text for kw in _TIME_KEYWORDS)
-    task_hit = any(kw in text for kw in _TASK_KEYWORDS)
-    return time_hit or task_hit
+    return any(kw in text for kw in _TIME_KEYWORDS) or any(kw in text for kw in _TASK_KEYWORDS)
 
 
 # ── Message processing ────────────────────────────────────────────────────────
@@ -340,12 +349,16 @@ def process_message(text: str, chat_id: str, reply_token: str | None = None) -> 
                 pass  # 已記錄，fallback 到 push
         _push_line(chat_id, msg)
 
-    if handle_command(text, chat_id):
+    if handle_command(text, chat_id, reply_token):
         return
 
-    # 本地快速判斷：命中才推送等待提示，避免日常聊天被打擾
+    # 有 push 額度就送「⏳」即時回饋；額度用盡（429）則靜默略過，
+    # 後續確認訊息仍會透過 reply_message 送出，功能不受影響
     if _should_notify(text):
-        _push_line(chat_id, "⏳ 收到！處理中，請稍候...")
+        try:
+            _push_line(chat_id, "⏳ 收到！處理中，請稍候...")
+        except Exception:
+            pass
 
     now = datetime.now(TAIPEI_TZ)
     result = parse_message(text, now)
@@ -454,17 +467,26 @@ async def serve_photo(file_id: str, sig: str = "", expires: int = 0):
     expected = _hmac.HMAC(secret.encode(), msg, hashlib.sha256).hexdigest()
     if not _hmac.compare_digest(expected, sig):
         raise HTTPException(status_code=403, detail="Invalid signature")
-    creds = get_credentials()
-    service = build_drive_service(creds)
-    request = service.files().get_media(fileId=file_id)
-    buf = io.BytesIO()
-    downloader = MediaIoBaseDownload(buf, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    buf.seek(0)
-    meta = service.files().get(fileId=file_id, fields="mimeType").execute()
-    return StreamingResponse(buf, media_type=meta.get("mimeType", "image/jpeg"))
+    def _download() -> tuple[bytes, str]:
+        creds = get_credentials()
+        service = build_drive_service(creds)
+        meta = service.files().get(fileId=file_id, fields="mimeType").execute()
+        mime = meta.get("mimeType", "image/jpeg")
+        req = service.files().get_media(fileId=file_id)
+        buf = io.BytesIO()
+        downloader = MediaIoBaseDownload(buf, req)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return buf.getvalue(), mime
+
+    data, mime_type = await asyncio.to_thread(_download)
+    return StreamingResponse(io.BytesIO(data), media_type=mime_type)
+
+
+def _dispatch_mom(reply_token: str) -> None:
+    with ApiClient(line_config) as api_client:
+        handle_mom_message(reply_token, MessagingApi(api_client))
 
 
 @app.post("/webhook")
@@ -476,14 +498,24 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="Invalid signature")
 
+    DOUBLEA_GROUP_ID = os.environ.get("DOUBLEA_GROUP_ID", "")
+
     for event in events:
-        # 媽媽偵測：任意訊息類型都觸發，優先於其他 handler
+        chat_id = _get_chat_id(event)
+        print(f"[DEBUG] event chat_id={chat_id}")
+
+        # 媽媽偵測：任意訊息類型、任意群組都觸發，優先於其他 handler
         if isinstance(event, MessageEvent):
             user_id = getattr(event.source, "user_id", None) or ""
             if is_mom(user_id):
-                with ApiClient(line_config) as api_client:
-                    handle_mom_message(event.reply_token, MessagingApi(api_client))
-                continue  # 跳過原本的 process_message
+                reply_token = event.reply_token
+                background_tasks.add_task(_dispatch_mom, reply_token)
+                continue
+
+        # 白名單：若有設定 DOUBLEA_GROUP_ID，只處理來自該群組的訊息
+        if DOUBLEA_GROUP_ID and chat_id != DOUBLEA_GROUP_ID:
+            print(f"[DEBUG] 非 DoubleA 群組，略過 chat_id={chat_id}")
+            continue
 
         if isinstance(event, MessageEvent) and isinstance(
             event.message, TextMessageContent
@@ -491,7 +523,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
             background_tasks.add_task(
                 process_message,
                 event.message.text.strip(),
-                _get_chat_id(event),
+                chat_id,
                 event.reply_token,
             )
     return JSONResponse(content={"status": "ok"})
@@ -590,14 +622,27 @@ async def check_reminders():
     """Cloud Scheduler 每 15 分鐘呼叫此端點，檢查並發送到期的活動提醒。"""
     now = datetime.now(TAIPEI_TZ)
     due = get_due_reminders(now)
+    sent_count = 0
+    stale_count = 0
     for r in due:
+        doc_id = r.get("_doc_id", r.get("_id"))
+        # 事件已經開始（甚至結束），代表這則提醒因故卡住沒送出（如 push 配額用盡）。
+        # 「還有 2 小時」對已過去的事件沒有意義，直接標記已送出、丟棄，不補發也不浪費配額。
+        if datetime.fromisoformat(r["start"]) <= now:
+            print(f"[DoubleA] 提醒已過期，略過：{r['title']}")
+            mark_reminder_sent(doc_id)
+            stale_count += 1
+            continue
         try:
             send_event_reminder(r["chat_id"], r["title"], r["start"])
-            mark_reminder_sent(r.get("_doc_id", r.get("_id")))
+            mark_reminder_sent(doc_id)
+            sent_count += 1
             print(f"[DoubleA] 活動提醒發送：{r['title']}")
         except Exception as e:
             print(f"[DoubleA] 提醒發送失敗：{e}")
-    return JSONResponse(content={"status": "ok", "sent": len(due)})
+    return JSONResponse(
+        content={"status": "ok", "sent": sent_count, "stale_discarded": stale_count}
+    )
 
 
 @app.get("/health")
