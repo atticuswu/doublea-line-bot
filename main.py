@@ -467,21 +467,33 @@ async def serve_photo(file_id: str, sig: str = "", expires: int = 0):
     expected = _hmac.HMAC(secret.encode(), msg, hashlib.sha256).hexdigest()
     if not _hmac.compare_digest(expected, sig):
         raise HTTPException(status_code=403, detail="Invalid signature")
-    def _download() -> tuple[bytes, str]:
+    def _get_meta_and_token() -> tuple[str, str]:
         creds = get_credentials()
         service = build_drive_service(creds)
         meta = service.files().get(fileId=file_id, fields="mimeType").execute()
         mime = meta.get("mimeType", "image/jpeg")
-        req = service.files().get_media(fileId=file_id)
-        buf = io.BytesIO()
-        downloader = MediaIoBaseDownload(buf, req)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        return buf.getvalue(), mime
+        return mime, creds.token
 
-    data, mime_type = await asyncio.to_thread(_download)
-    return StreamingResponse(io.BytesIO(data), media_type=mime_type)
+    mime_type, access_token = await asyncio.to_thread(_get_meta_and_token)
+
+    import httpx
+
+    async def _stream():
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                "GET", url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=30.0,
+            ) as r:
+                async for chunk in r.aiter_bytes(65536):
+                    yield chunk
+
+    return StreamingResponse(
+        _stream(),
+        media_type=mime_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 def _dispatch_mom(reply_token: str) -> None:
