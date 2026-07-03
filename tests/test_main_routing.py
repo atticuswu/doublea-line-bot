@@ -98,3 +98,39 @@ def test_unbound_group_ignored(route):
     ):
         action = route(ev)
     assert action is None
+
+
+def test_register_chat_fetches_group_name(monkeypatch):
+    monkeypatch.setattr(
+        main.bot_config, "load_config", lambda: {"known_chats": {}}
+    )
+    register_mock = MagicMock()
+    monkeypatch.setattr(main.bot_config, "register_chat", register_mock)
+
+    summary = MagicMock()
+    summary.group_name = "旅遊團"
+    api_instance = MagicMock()
+    api_instance.get_group_summary.return_value = summary
+    fake_messaging_api_cls = MagicMock(return_value=api_instance)
+    monkeypatch.setattr(main, "MessagingApi", fake_messaging_api_cls)
+
+    main._register_chat("Cnew", "group")
+
+    register_mock.assert_called_once_with("Cnew", "group", "旅遊團")
+    api_instance.get_group_summary.assert_called_once_with("Cnew")
+
+
+def test_register_chat_room_skips_api(monkeypatch):
+    monkeypatch.setattr(
+        main.bot_config, "load_config", lambda: {"known_chats": {}}
+    )
+    register_mock = MagicMock()
+    monkeypatch.setattr(main.bot_config, "register_chat", register_mock)
+
+    fake_messaging_api_cls = MagicMock()
+    monkeypatch.setattr(main, "MessagingApi", fake_messaging_api_cls)
+
+    main._register_chat("Rroom", "room")
+
+    fake_messaging_api_cls.assert_not_called()
+    register_mock.assert_called_once_with("Rroom", "room", "")

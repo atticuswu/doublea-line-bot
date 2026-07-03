@@ -501,6 +501,20 @@ def _dispatch_mom(reply_token: str) -> None:
         handle_mom_message(reply_token, MessagingApi(api_client))
 
 
+def _register_chat(chat_id: str, chat_type: str) -> None:
+    if chat_id in bot_config.load_config().get("known_chats", {}):
+        return
+    name = ""
+    if chat_type == "group":
+        try:
+            with ApiClient(line_config) as api_client:
+                summary = MessagingApi(api_client).get_group_summary(chat_id)
+                name = summary.group_name or ""
+        except Exception as e:
+            print(f"[Config] 取群組名稱失敗 {chat_id}: {e}")
+    bot_config.register_chat(chat_id, chat_type, name)
+
+
 def _route_event(event) -> tuple | None:
     """決定事件的處理方式。回傳 (action, *args) 或 None（略過）。"""
     if not isinstance(event, MessageEvent):
@@ -550,7 +564,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
             chat_type = "group" if getattr(event.source, "group_id", None) else (
                 "room" if getattr(event.source, "room_id", None) else "user"
             )
-            background_tasks.add_task(bot_config.register_chat, chat_id, chat_type)
+            background_tasks.add_task(_register_chat, chat_id, chat_type)
 
         action = _route_event(event)
         if action is None:
