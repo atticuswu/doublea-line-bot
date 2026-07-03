@@ -22,6 +22,11 @@ TAIPEI_TZ = pytz.timezone("Asia/Taipei")
 DEFAULT_STATE = {"mode": "monthly", "event_folder": "", "event_folder_id": "", "last_photo_at": 0.0}
 
 
+def _q_escape(value: str) -> str:
+    """跳脫 Google Drive 查詢語法中的特殊字符。"""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def _use_firestore() -> bool:
     return os.environ.get("K_SERVICE") is not None
 
@@ -52,12 +57,14 @@ def _make_filename(message_id: str, now: datetime) -> str:
 
 def _ensure_folder(service, name: str, parent_id: str | None) -> str:
     """找同名資料夾，沒有就建立，回傳 folder_id。"""
+    escaped_name = _q_escape(name)
     q = (
-        f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' "
+        f"name = '{escaped_name}' and mimeType = 'application/vnd.google-apps.folder' "
         "and trashed = false"
     )
     if parent_id:
-        q += f" and '{parent_id}' in parents"
+        escaped_parent_id = _q_escape(parent_id)
+        q += f" and '{escaped_parent_id}' in parents"
     res = service.files().list(q=q, fields="files(id)", pageSize=1).execute()
     files = res.get("files", [])
     if files:

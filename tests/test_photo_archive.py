@@ -90,3 +90,22 @@ def test_archive_photo_upload_retries_then_fails(pa):
     ):
         assert pa.archive_photo("msg789") is False
         assert up.call_count == 3
+
+
+def test_ensure_folder_escapes_quotes(pa):
+    """Verify _ensure_folder escapes single quotes in folder name."""
+    service = MagicMock()
+    service.files().list().execute.return_value = {"files": []}
+    service.files().create().execute.return_value = {"id": "new_folder_id"}
+
+    result = pa._ensure_folder(service, "Tom's Island", "parent_id_123")
+
+    # Check that files().list() was called with escaped query
+    call_args = service.files().list.call_args
+    q_param = call_args.kwargs["q"]
+    assert "Tom\\'s Island" in q_param, f"Expected escaped quote in query: {q_param}"
+    assert "parent_id_123" in q_param
+
+    # Verify creation was called for the non-existent folder
+    assert service.files().create.called
+    assert result == "new_folder_id"
