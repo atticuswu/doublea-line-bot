@@ -13,6 +13,8 @@ from google_auth import get_credentials
 from mom_photo import build_drive_service
 
 ROOT_FOLDER_NAME = "LINE相簿"
+# 若設定 ARCHIVE_ROOT_FOLDER_ID，直接以該資料夾為根，不另建 ROOT_FOLDER_NAME
+ARCHIVE_ROOT_FOLDER_ID = os.environ.get("ARCHIVE_ROOT_FOLDER_ID", "")
 EVENT_TIMEOUT_SEC = 3 * 86400
 FIRESTORE_COLLECTION = "doublea"
 STATE_DOC = "photo_archive_state"
@@ -75,10 +77,15 @@ def _ensure_folder(service, name: str, parent_id: str | None) -> str:
     return service.files().create(body=body, fields="id").execute()["id"]
 
 
+def _root_folder(service) -> str:
+    if ARCHIVE_ROOT_FOLDER_ID:
+        return ARCHIVE_ROOT_FOLDER_ID
+    return _ensure_folder(service, ROOT_FOLDER_NAME, None)
+
+
 def _monthly_folder(service) -> str:
-    root_id = _ensure_folder(service, ROOT_FOLDER_NAME, None)
     month = datetime.now(TAIPEI_TZ).strftime("%Y-%m")
-    return _ensure_folder(service, month, root_id)
+    return _ensure_folder(service, month, _root_folder(service))
 
 
 def _get_target_folder(service) -> str:
@@ -95,7 +102,7 @@ def _get_target_folder(service) -> str:
 def _start_event(location: str) -> None:
     creds = get_credentials()
     service = build_drive_service(creds)
-    root_id = _ensure_folder(service, ROOT_FOLDER_NAME, None)
+    root_id = _root_folder(service)
     name = f"{datetime.now(TAIPEI_TZ).strftime('%Y-%m')}_{location}"
     folder_id = _ensure_folder(service, name, root_id)
     _save_state({

@@ -109,3 +109,11 @@ def test_ensure_folder_escapes_quotes(pa):
     # Verify creation was called for the non-existent folder
     assert service.files().create.called
     assert result == "new_folder_id"
+
+
+def test_root_folder_uses_env_id(pa, monkeypatch):
+    monkeypatch.setattr(pa, "ARCHIVE_ROOT_FOLDER_ID", "user_root_id")
+    service = MagicMock()
+    with patch.object(pa, "_ensure_folder") as ef:
+        assert pa._root_folder(service) == "user_root_id"
+        ef.assert_not_called()
