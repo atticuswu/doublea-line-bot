@@ -138,7 +138,8 @@ def handle_album_command(text: str, reply_token: str, line_api) -> bool:
             reply_token=reply_token,
             messages=[TextMessage(
                 text=f"📸 相簿「{state['event_folder']}」開好了！"
-                     f"接下來的照片會自動存進去（3 天沒新照片自動結束）"
+                     f"接下來的照片會自動存進去（3 天沒新照片自動結束）\n\n"
+                     f"📂 https://drive.google.com/drive/folders/{state['event_folder_id']}"
             )],
         )
     )
