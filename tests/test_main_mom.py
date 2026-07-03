@@ -36,21 +36,28 @@ def test_photo_endpoint_streams_image():
     sig = _make_test_sig(file_id, secret, expires)
 
     mock_service = MagicMock()
-    # MediaIoBaseDownload 寫入 buf 的 mock
-    def fake_download(buf, request):
-        downloader = MagicMock()
-        def next_chunk():
-            buf.write(fake_image)
-            return MagicMock(), True
-        downloader.next_chunk = next_chunk
-        return downloader
-
-    mock_service.files().get_media.return_value = MagicMock()
     mock_service.files().get().execute.return_value = {"mimeType": "image/jpeg"}
 
+    # mock httpx.AsyncClient 串流：async context managers + aiter_bytes
+    class FakeStreamResponse:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def aiter_bytes(self, chunk_size):
+            yield fake_image
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        def stream(self, *a, **kw):
+            return FakeStreamResponse()
+
+    import httpx
     with patch.dict("os.environ", {"PHOTO_SERVE_SECRET": secret}):
         with patch("main.build_drive_service", return_value=mock_service):
-            with patch("main.MediaIoBaseDownload", side_effect=fake_download):
+            with patch.object(httpx, "AsyncClient", return_value=FakeAsyncClient()):
                 with patch("main.get_credentials", return_value=MagicMock()):
                     from main import app
                     client = TestClient(app)
