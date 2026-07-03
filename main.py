@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from google_auth import get_credentials
 from googleapiclient.http import MediaIoBaseDownload
 from linebot.v3.exceptions import InvalidSignatureError
@@ -680,6 +680,113 @@ async def check_reminders():
     return JSONResponse(
         content={"status": "ok", "sent": sent_count, "stale_discarded": stale_count}
     )
+
+
+# ── Admin Dashboard ───────────────────────────────────────────────────────────
+
+FEATURE_LABELS = {
+    "todo": "待辦 + 早安推播",
+    "mom_photo": "媽媽照片回覆",
+    "photo_archive": "照片歸檔",
+}
+
+
+def _check_admin_token(token: str) -> None:
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    if not expected or not _hmac.compare_digest(expected, token):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(token: str = ""):
+    _check_admin_token(token)
+    cfg = bot_config.load_config()
+    import json as _json
+    return ADMIN_HTML.replace("__CONFIG__", _json.dumps(cfg, ensure_ascii=False)) \
+                     .replace("__LABELS__", _json.dumps(FEATURE_LABELS, ensure_ascii=False)) \
+                     .replace("__TOKEN__", token)
+
+
+@app.post("/admin/config")
+async def admin_save(request: Request, token: str = ""):
+    _check_admin_token(token)
+    cfg = await request.json()
+    bot_config.save_config(cfg)
+    return JSONResponse(content={"status": "ok"})
+
+
+ADMIN_HTML = """<!DOCTYPE html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DoubleA Bot Dashboard</title>
+<style>
+body{font-family:-apple-system,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;background:#fafafa}
+h1{font-size:1.4rem} h2{font-size:1.1rem;margin-top:2rem}
+.card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:1rem;margin:.8rem 0}
+.feature-head{display:flex;justify-content:space-between;align-items:center}
+label.chat{display:block;margin:.3rem 0 .3rem 1rem}
+input[type=text]{width:12rem;padding:.2rem}
+button{background:#06c755;color:#fff;border:none;border-radius:6px;padding:.6rem 1.4rem;font-size:1rem;cursor:pointer}
+.toggle{width:2.6rem;height:1.5rem}
+#msg{margin-left:1rem;color:#06c755}
+</style></head><body>
+<h1>🤖 DoubleA Bot Dashboard</h1>
+<div id="features"></div>
+<h2>已知群組</h2>
+<div id="chats"></div>
+<button onclick="save()">儲存</button><span id="msg"></span>
+<script>
+const cfg = __CONFIG__;
+const labels = __LABELS__;
+const token = "__TOKEN__";
+
+function chatLabel(id){
+  const c = cfg.known_chats[id] || {};
+  return (c.note || c.name || id) + " (" + id.slice(0,8) + "…)";
+}
+function render(){
+  const f = document.getElementById("features");
+  f.innerHTML = "";
+  for(const [name, feat] of Object.entries(cfg.features)){
+    const card = document.createElement("div"); card.className = "card";
+    let html = `<div class="feature-head"><strong>${labels[name]||name}</strong>
+      <input class="toggle" type="checkbox" ${feat.enabled?"checked":""}
+        onchange="cfg.features['${name}'].enabled=this.checked"></div>`;
+    if(name !== "mom_photo"){
+      for(const id of Object.keys(cfg.known_chats)){
+        const on = feat.chat_ids.includes(id);
+        html += `<label class="chat"><input type="checkbox" ${on?"checked":""}
+          onchange="toggleChat('${name}','${id}',this.checked)"> ${chatLabel(id)}</label>`;
+      }
+    } else {
+      html += `<label class="chat">依媽媽的 user_id 觸發，不限群組</label>`;
+    }
+    card.innerHTML = html; f.appendChild(card);
+  }
+  const ch = document.getElementById("chats");
+  ch.innerHTML = "";
+  for(const [id, c] of Object.entries(cfg.known_chats)){
+    const card = document.createElement("div"); card.className = "card";
+    card.innerHTML = `<code>${id}</code> [${c.type}] ${c.name||""}
+      備註：<input type="text" value="${c.note||""}"
+        onchange="cfg.known_chats['${id}'].note=this.value">`;
+    ch.appendChild(card);
+  }
+}
+function toggleChat(f, id, on){
+  const arr = cfg.features[f].chat_ids;
+  if(on && !arr.includes(id)) arr.push(id);
+  if(!on) cfg.features[f].chat_ids = arr.filter(x=>x!==id);
+}
+async function save(){
+  const r = await fetch(`/admin/config?token=${token}`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(cfg)});
+  document.getElementById("msg").textContent = r.ok ? "已儲存 ✓" : "失敗！";
+  setTimeout(()=>document.getElementById("msg").textContent="", 3000);
+}
+render();
+</script></body></html>"""
 
 
 @app.get("/health")
