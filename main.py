@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac as _hmac
 import io
+import json as _json
 import os
 import random
 import time
@@ -701,10 +702,9 @@ def _check_admin_token(token: str) -> None:
 async def admin_page(token: str = ""):
     _check_admin_token(token)
     cfg = bot_config.load_config()
-    import json as _json
     return ADMIN_HTML.replace("__CONFIG__", _json.dumps(cfg, ensure_ascii=False)) \
                      .replace("__LABELS__", _json.dumps(FEATURE_LABELS, ensure_ascii=False)) \
-                     .replace("__TOKEN__", token)
+                     .replace("__TOKEN__", _json.dumps(token))
 
 
 @app.post("/admin/config")
@@ -738,8 +738,9 @@ button{background:#06c755;color:#fff;border:none;border-radius:6px;padding:.6rem
 <script>
 const cfg = __CONFIG__;
 const labels = __LABELS__;
-const token = "__TOKEN__";
+const token = __TOKEN__;
 
+function esc(s){return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function chatLabel(id){
   const c = cfg.known_chats[id] || {};
   return (c.note || c.name || id) + " (" + id.slice(0,8) + "…)";
@@ -749,14 +750,14 @@ function render(){
   f.innerHTML = "";
   for(const [name, feat] of Object.entries(cfg.features)){
     const card = document.createElement("div"); card.className = "card";
-    let html = `<div class="feature-head"><strong>${labels[name]||name}</strong>
+    let html = `<div class="feature-head"><strong>${esc(labels[name]||name)}</strong>
       <input class="toggle" type="checkbox" ${feat.enabled?"checked":""}
-        onchange="cfg.features['${name}'].enabled=this.checked"></div>`;
+        onchange="cfg.features['${esc(name)}'].enabled=this.checked"></div>`;
     if(name !== "mom_photo"){
       for(const id of Object.keys(cfg.known_chats)){
         const on = feat.chat_ids.includes(id);
         html += `<label class="chat"><input type="checkbox" ${on?"checked":""}
-          onchange="toggleChat('${name}','${id}',this.checked)"> ${chatLabel(id)}</label>`;
+          onchange="toggleChat('${esc(name)}','${esc(id)}',this.checked)"> ${esc(chatLabel(id))}</label>`;
       }
     } else {
       html += `<label class="chat">依媽媽的 user_id 觸發，不限群組</label>`;
@@ -767,9 +768,9 @@ function render(){
   ch.innerHTML = "";
   for(const [id, c] of Object.entries(cfg.known_chats)){
     const card = document.createElement("div"); card.className = "card";
-    card.innerHTML = `<code>${id}</code> [${c.type}] ${c.name||""}
-      備註：<input type="text" value="${c.note||""}"
-        onchange="cfg.known_chats['${id}'].note=this.value">`;
+    card.innerHTML = `<code>${esc(id)}</code> [${esc(c.type)}] ${esc(c.name||"")}
+      備註：<input type="text" value="${esc(c.note||"")}"
+        onchange="cfg.known_chats['${esc(id)}'].note=this.value">`;
     ch.appendChild(card);
   }
 }

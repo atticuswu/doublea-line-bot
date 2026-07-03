@@ -40,3 +40,9 @@ def test_admin_config_post_rejects_bad_token():
         r = client.post("/admin/config?token=nope", json={})
     assert r.status_code == 403
     sc.assert_not_called()
+
+
+def test_admin_rejects_when_admin_token_unset():
+    with patch.dict("os.environ", {"ADMIN_TOKEN": ""}):
+        r = client.get("/admin?token=anything-nonempty")
+    assert r.status_code == 403
