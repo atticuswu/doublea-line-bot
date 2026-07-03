@@ -32,7 +32,11 @@ def _get_db():
 
 
 def _merge_default(cfg: dict) -> dict:
-    """補齊缺少的 keys（新功能加入 DEFAULT_CONFIG 後自動出現）。"""
+    """補齊缺少的 keys（新功能加入 DEFAULT_CONFIG 後自動出現）。
+
+    注意：僅 features 內做逐功能合併；其餘 top-level keys 為淺層覆蓋，
+    新增含巢狀預設值的 top-level key 時需擴充此函式。
+    """
     merged = json.loads(json.dumps(DEFAULT_CONFIG))
     merged.update({k: v for k, v in cfg.items() if k not in ("features",)})
     for name, feat in cfg.get("features", {}).items():
