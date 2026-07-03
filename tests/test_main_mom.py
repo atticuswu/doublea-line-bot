@@ -79,20 +79,21 @@ def test_webhook_mom_message_triggers_photo():
     object.__setattr__(mock_event, 'source', MockSource("Umom"))
     object.__setattr__(mock_event, 'reply_token', "tok123")
 
-    with patch("main.is_mom", return_value=True) as mock_is_mom:
-        with patch("main.handle_mom_message", return_value=True) as mock_handle:
-            with patch("main.parser") as mock_parser:
-                mock_parser.parse.return_value = [mock_event]
-                from main import app
-                client = TestClient(app)
-                response = client.post(
-                    "/webhook",
-                    content=body,
-                    headers={"X-Line-Signature": "dummy"},
-                )
+    with patch("main.bot_config.get_mom_user_id", return_value="Umom") as mock_get_mom:
+        with patch("main.bot_config.register_chat"):
+            with patch("main.handle_mom_message", return_value=True) as mock_handle:
+                with patch("main.parser") as mock_parser:
+                    mock_parser.parse.return_value = [mock_event]
+                    from main import app
+                    client = TestClient(app)
+                    response = client.post(
+                        "/webhook",
+                        content=body,
+                        headers={"X-Line-Signature": "dummy"},
+                    )
 
     assert response.status_code == 200
-    mock_is_mom.assert_called_once_with("Umom")
+    mock_get_mom.assert_called()
     mock_handle.assert_called_once()
 
 
@@ -104,16 +105,18 @@ def test_webhook_non_mom_message_skips_photo():
     # Set message to None to avoid AttributeError in the second isinstance check
     object.__setattr__(mock_event, 'message', None)
 
-    with patch("main.is_mom", return_value=False) as mock_is_mom:
-        with patch("main.handle_mom_message") as mock_handle:
-            with patch("main.parser") as mock_parser:
-                mock_parser.parse.return_value = [mock_event]
-                from main import app
-                client = TestClient(app)
-                response = client.post(
-                    "/webhook",
-                    content=b'{}',
-                    headers={"X-Line-Signature": "dummy"},
-                )
+    with patch("main.bot_config.get_mom_user_id", return_value="Umom"):
+        with patch("main.bot_config.is_feature_on", return_value=False):
+            with patch("main.bot_config.register_chat"):
+                with patch("main.handle_mom_message") as mock_handle:
+                    with patch("main.parser") as mock_parser:
+                        mock_parser.parse.return_value = [mock_event]
+                        from main import app
+                        client = TestClient(app)
+                        response = client.post(
+                            "/webhook",
+                            content=b'{}',
+                            headers={"X-Line-Signature": "dummy"},
+                        )
 
     mock_handle.assert_not_called()

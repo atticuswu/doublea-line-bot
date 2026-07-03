@@ -24,10 +24,12 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from linebot.v3.webhooks import ImageMessageContent, MessageEvent, TextMessageContent
 
+import bot_config
+import photo_archive
 from calendar_service import create_calendar_event, list_events_for_date, update_calendar_event
-from mom_photo import build_drive_service, handle_mom_message, is_mom
+from mom_photo import build_drive_service, handle_mom_message
 from event_parser import parse_message, parse_modification
 from state_service import (
     add_reminder,
@@ -334,7 +336,6 @@ def _should_notify(text: str) -> bool:
 
 def process_message(text: str, chat_id: str, reply_token: str | None = None) -> None:
     print(f"[DoubleA] 收到訊息：{text}")
-    save_chat_id(chat_id)
 
     # 優先用 reply_token（免費），失敗或無 token 時 fallback 到 push
     _used_reply: list[bool] = [False]
@@ -501,6 +502,40 @@ def _dispatch_mom(reply_token: str) -> None:
         handle_mom_message(reply_token, MessagingApi(api_client))
 
 
+def _route_event(event) -> tuple | None:
+    """決定事件的處理方式。回傳 (action, *args) 或 None（略過）。"""
+    if not isinstance(event, MessageEvent):
+        return None
+    chat_id = _get_chat_id(event)
+    user_id = getattr(event.source, "user_id", None) or ""
+
+    # 1. 媽媽照片：不限群組
+    if user_id and user_id == bot_config.get_mom_user_id():
+        return ("mom_photo", event.reply_token)
+
+    # 2. 照片歸檔：綁定群組的圖片與「相簿」指令
+    if bot_config.is_feature_on("photo_archive", chat_id):
+        if isinstance(event.message, ImageMessageContent):
+            return ("archive_photo", event.message.id)
+        if isinstance(event.message, TextMessageContent):
+            text = event.message.text.strip()
+            if text.startswith("相簿 "):
+                return ("album_command", text, event.reply_token)
+
+    # 3. 待辦：綁定群組的文字訊息
+    if bot_config.is_feature_on("todo", chat_id) and isinstance(
+        event.message, TextMessageContent
+    ):
+        return ("todo", event.message.text.strip(), chat_id, event.reply_token)
+
+    return None
+
+
+def _dispatch_album_command(text: str, reply_token: str) -> None:
+    with ApiClient(line_config) as api_client:
+        photo_archive.handle_album_command(text, reply_token, MessagingApi(api_client))
+
+
 @app.post("/webhook")
 async def webhook(request: Request, background_tasks: BackgroundTasks):
     signature = request.headers.get("X-Line-Signature", "")
@@ -510,41 +545,33 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="Invalid signature")
 
-    DOUBLEA_GROUP_ID = os.environ.get("DOUBLEA_GROUP_ID", "")
-
     for event in events:
-        chat_id = _get_chat_id(event)
-        print(f"[DEBUG] event chat_id={chat_id}")
-
-        # 媽媽偵測：任意訊息類型、任意群組都觸發，優先於其他 handler
         if isinstance(event, MessageEvent):
-            user_id = getattr(event.source, "user_id", None) or ""
-            if is_mom(user_id):
-                reply_token = event.reply_token
-                background_tasks.add_task(_dispatch_mom, reply_token)
-                continue
-
-        # 白名單：若有設定 DOUBLEA_GROUP_ID，只處理來自該群組的訊息
-        if DOUBLEA_GROUP_ID and chat_id != DOUBLEA_GROUP_ID:
-            print(f"[DEBUG] 非 DoubleA 群組，略過 chat_id={chat_id}")
-            continue
-
-        if isinstance(event, MessageEvent) and isinstance(
-            event.message, TextMessageContent
-        ):
-            background_tasks.add_task(
-                process_message,
-                event.message.text.strip(),
-                chat_id,
-                event.reply_token,
+            chat_id = _get_chat_id(event)
+            chat_type = "group" if getattr(event.source, "group_id", None) else (
+                "room" if getattr(event.source, "room_id", None) else "user"
             )
+            background_tasks.add_task(bot_config.register_chat, chat_id, chat_type)
+
+        action = _route_event(event)
+        if action is None:
+            continue
+        kind = action[0]
+        if kind == "mom_photo":
+            background_tasks.add_task(_dispatch_mom, action[1])
+        elif kind == "archive_photo":
+            background_tasks.add_task(photo_archive.archive_photo, action[1])
+        elif kind == "album_command":
+            background_tasks.add_task(_dispatch_album_command, action[1], action[2])
+        elif kind == "todo":
+            background_tasks.add_task(process_message, action[1], action[2], action[3])
     return JSONResponse(content={"status": "ok"})
 
 
 @app.post("/morning-briefing")
 async def morning_briefing():
     """Cloud Scheduler 每天 08:00 呼叫：今日行事曆 + 未完成待辦。"""
-    chat_id = load_chat_id()
+    chat_id = bot_config.get_todo_chat_id()
     if not chat_id:
         return JSONResponse(content={"status": "no_chat_id"})
 
@@ -588,7 +615,7 @@ async def morning_briefing():
 @app.post("/daily-reminder")
 async def daily_reminder():
     """Cloud Scheduler 每天 17:00 呼叫：未完成待辦 + 今日剩餘行事曆。"""
-    chat_id = load_chat_id()
+    chat_id = bot_config.get_todo_chat_id()
     if not chat_id:
         return JSONResponse(content={"status": "no_chat_id"})
 
