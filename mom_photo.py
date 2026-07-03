@@ -3,7 +3,6 @@ import hmac as _hmac
 import os
 import random
 import time
-import time as _time_module
 
 from google_auth import get_credentials
 from googleapiclient.discovery import build as _gapi_build
@@ -27,7 +26,7 @@ _carousel_memory: dict = {}  # in-memory cache for carousel state
 
 def _make_photo_url(file_id: str) -> str:
     secret = os.environ.get("PHOTO_SERVE_SECRET", os.environ.get("LINE_CHANNEL_SECRET", ""))
-    expires = int(_time_module.time()) + 3600  # 1 hour
+    expires = int(time.time()) + 3600
     msg = f"{file_id}:{expires}".encode()
     sig = _hmac.HMAC(secret.encode(), msg, hashlib.sha256).hexdigest()
     return f"{DOUBLEA_PUBLIC_URL}/photo/{file_id}?sig={sig}&expires={expires}"
