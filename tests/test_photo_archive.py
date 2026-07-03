@@ -117,3 +117,11 @@ def test_root_folder_uses_env_id(pa, monkeypatch):
     with patch.object(pa, "_ensure_folder") as ef:
         assert pa._root_folder(service) == "user_root_id"
         ef.assert_not_called()
+
+
+def test_parse_album_command_with_quotes(pa):
+    assert pa.parse_album_command("「相簿 202606台東遊」") == "202606台東遊"
+    assert pa.parse_album_command("相簿 薄荷島") == "薄荷島"
+    assert pa.parse_album_command('"相簿 Tokyo"') == "Tokyo"
+    assert pa.parse_album_command("午餐吃什麼") is None
+    assert pa.parse_album_command("相簿 ") is None

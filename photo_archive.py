@@ -112,15 +112,24 @@ def _start_event(location: str) -> None:
     print(f"[Archive] 事件模式開始：{name}")
 
 
+_QUOTE_CHARS = "「」『』【】\"'‘’“”"
+
+
+def parse_album_command(text: str) -> str | None:
+    """解析「相簿 <地點>」指令，容忍前後引號。非此指令回 None。"""
+    text = text.strip().strip(_QUOTE_CHARS).strip()
+    if not text.startswith("相簿 "):
+        return None
+    location = text[len("相簿 "):].strip().strip(_QUOTE_CHARS).strip()
+    return location or None
+
+
 def handle_album_command(text: str, reply_token: str, line_api) -> bool:
     """「相簿 <地點>」→ 進事件模式並回覆確認。非此指令回 False。"""
     from linebot.v3.messaging import ReplyMessageRequest, TextMessage
 
-    text = text.strip()
-    if not text.startswith("相簿 "):
-        return False
-    location = text[len("相簿 "):].strip()
-    if not location:
+    location = parse_album_command(text)
+    if location is None:
         return False
     _start_event(location)
     state = _load_state()

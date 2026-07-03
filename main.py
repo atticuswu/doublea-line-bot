@@ -532,7 +532,7 @@ def _route_event(event) -> tuple | None:
             return ("archive_photo", event.message.id)
         if isinstance(event.message, TextMessageContent):
             text = event.message.text.strip()
-            if text.startswith("相簿 "):
+            if photo_archive.parse_album_command(text) is not None:
                 return ("album_command", text, event.reply_token)
 
     # 3. 待辦：綁定群組的文字訊息
