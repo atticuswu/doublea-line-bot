@@ -5,3 +5,5 @@ chat_state.json
 __pycache__/
 *.pyc
 .DS_Store
+.admin_token
+.token_b64
