@@ -34,10 +34,8 @@ from event_parser import parse_message, parse_modification
 from state_service import (
     add_reminder,
     get_due_reminders,
-    load_chat_id,
     load_last_event,
     mark_reminder_sent,
-    save_chat_id,
     save_last_event,
 )
 from todo_service import (
