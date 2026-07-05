@@ -164,28 +164,60 @@ def _upload_to_drive(service, data: bytes, filename: str, folder_id: str) -> Non
     ).execute()
 
 
-def archive_photo(message_id: str) -> bool:
-    """下載 LINE 照片並上傳 Drive。失敗重試 3 次。"""
+def _current_folder_label() -> str:
+    """目前歸檔目的地的顯示名稱（事件相簿名或月份）。"""
+    state = _load_state()
+    if state.get("mode") == "event" and state.get("event_folder"):
+        return state["event_folder"]
+    return datetime.now(TAIPEI_TZ).strftime("%Y-%m")
+
+
+def _reply_text(reply_token: str, text: str) -> None:
+    from linebot.v3.messaging import (
+        ApiClient, Configuration, MessagingApi, ReplyMessageRequest, TextMessage,
+    )
+    cfg = Configuration(access_token=os.environ["LINE_CHANNEL_ACCESS_TOKEN"])
+    with ApiClient(cfg) as api_client:
+        MessagingApi(api_client).reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=text)],
+            )
+        )
+
+
+def archive_photo(message_id: str, reply_token: str = "", announce_total: int = 0) -> bool:
+    """下載 LINE 照片並上傳 Drive。整段（含取憑證）失敗重試 3 次。
+
+    reply_token 非空時（一組照片的最後一張），成功後回覆歸檔確認訊息。
+    """
     try:
         data = _download_line_content(message_id)
     except Exception as e:
         print(f"[Archive] 下載失敗 message_id={message_id}: {e}")
         return False
 
-    creds = get_credentials()
-    service = build_drive_service(creds)
-    folder_id = _get_target_folder(service)
     filename = _make_filename(message_id, datetime.now(TAIPEI_TZ))
 
     for attempt in range(3):
         try:
+            creds = get_credentials()
+            service = build_drive_service(creds)
+            folder_id = _get_target_folder(service)
             _upload_to_drive(service, data, filename, folder_id)
             state = _load_state()
             state["last_photo_at"] = time.time()
             _save_state(state)
             print(f"[Archive] 已歸檔 {filename}")
+            if reply_token:
+                label = _current_folder_label()
+                count_str = f"{announce_total} 張" if announce_total > 1 else "1 張"
+                try:
+                    _reply_text(reply_token, f"✅ {count_str}照片已收進「{label}」相簿")
+                except Exception as e:
+                    print(f"[Archive] 確認訊息回覆失敗：{e}")
             return True
         except Exception as e:
-            print(f"[Archive] 上傳失敗（第 {attempt + 1} 次）message_id={message_id}: {e}")
+            print(f"[Archive] 歸檔失敗（第 {attempt + 1} 次）message_id={message_id}: {e}")
             time.sleep(2)
     return False

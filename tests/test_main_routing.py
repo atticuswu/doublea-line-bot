@@ -61,7 +61,8 @@ def test_archive_image_in_bound_group(route):
         ),
     ):
         action = route(ev)
-    assert action == ("archive_photo", "imgmsg1")
+    # 單張照片（無 image_set）→ 帶 reply_token、總數 1
+    assert action == ("archive_photo", "imgmsg1", "rtoken", 1)
 
 
 def test_album_command_in_bound_group(route):
@@ -134,3 +135,26 @@ def test_register_chat_room_skips_api(monkeypatch):
 
     fake_messaging_api_cls.assert_not_called()
     register_mock.assert_called_once_with("Rroom", "room", "")
+
+
+def test_archive_image_set_only_last_gets_reply_token(route):
+    """一組照片只有最後一張帶 reply_token。"""
+    class ImgSet:
+        def __init__(self, index, total):
+            self.index = index
+            self.total = total
+
+    ev_mid = _fake_event("Ctrip", "Uany", is_image=True)
+    object.__setattr__(ev_mid.message, "image_set", ImgSet(1, 3))
+    ev_last = _fake_event("Ctrip", "Uany", is_image=True)
+    object.__setattr__(ev_last.message, "image_set", ImgSet(3, 3))
+
+    with (
+        patch.object(main.bot_config, "get_mom_user_id", return_value="Umom"),
+        patch.object(
+            main.bot_config, "is_feature_on",
+            side_effect=lambda f, c: f == "photo_archive" and c == "Ctrip",
+        ),
+    ):
+        assert route(ev_mid) == ("archive_photo", "imgmsg1", "", 3)
+        assert route(ev_last) == ("archive_photo", "imgmsg1", "rtoken", 3)

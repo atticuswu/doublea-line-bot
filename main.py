@@ -529,7 +529,12 @@ def _route_event(event) -> tuple | None:
     # 2. 照片歸檔：綁定群組的圖片與「相簿」指令
     if bot_config.is_feature_on("photo_archive", chat_id):
         if isinstance(event.message, ImageMessageContent):
-            return ("archive_photo", event.message.id)
+            # 一組照片（image set）只在最後一張回覆確認訊息
+            imgset = getattr(event.message, "image_set", None)
+            total = (getattr(imgset, "total", None) or 1) if imgset else 1
+            index = (getattr(imgset, "index", None) or 1) if imgset else 1
+            reply_token = event.reply_token if index == total else ""
+            return ("archive_photo", event.message.id, reply_token, total)
         if isinstance(event.message, TextMessageContent):
             text = event.message.text.strip()
             if photo_archive.parse_album_command(text) is not None:
@@ -573,7 +578,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         if kind == "mom_photo":
             background_tasks.add_task(_dispatch_mom, action[1])
         elif kind == "archive_photo":
-            background_tasks.add_task(photo_archive.archive_photo, action[1])
+            background_tasks.add_task(photo_archive.archive_photo, action[1], action[2], action[3])
         elif kind == "album_command":
             background_tasks.add_task(_dispatch_album_command, action[1], action[2])
         elif kind == "todo":

@@ -125,3 +125,32 @@ def test_parse_album_command_with_quotes(pa):
     assert pa.parse_album_command('"相簿 Tokyo"') == "Tokyo"
     assert pa.parse_album_command("午餐吃什麼") is None
     assert pa.parse_album_command("相簿 ") is None
+
+
+def test_archive_photo_replies_on_last_of_set(pa):
+    with (
+        patch.object(pa, "_download_line_content", return_value=b"x"),
+        patch.object(pa, "get_credentials"),
+        patch.object(pa, "build_drive_service"),
+        patch.object(pa, "_get_target_folder", return_value="fid"),
+        patch.object(pa, "_upload_to_drive"),
+        patch.object(pa, "_current_folder_label", return_value="2026-07_台東遊"),
+        patch.object(pa, "_reply_text") as reply,
+    ):
+        assert pa.archive_photo("msg1", reply_token="rt", announce_total=3) is True
+        reply.assert_called_once()
+        text = reply.call_args.args[1]
+        assert "3 張" in text and "2026-07_台東遊" in text
+
+
+def test_archive_photo_retries_credential_failure(pa):
+    """取憑證的暫時性錯誤也要重試（過去在重試圈外導致照片遺失）。"""
+    with (
+        patch.object(pa, "_download_line_content", return_value=b"x"),
+        patch.object(pa, "get_credentials", side_effect=[RuntimeError("ssl eof"), MagicMock()]),
+        patch.object(pa, "build_drive_service"),
+        patch.object(pa, "_get_target_folder", return_value="fid"),
+        patch.object(pa, "_upload_to_drive"),
+        patch.object(pa.time, "sleep"),
+    ):
+        assert pa.archive_photo("msg1") is True
