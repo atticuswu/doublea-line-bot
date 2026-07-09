@@ -723,6 +723,8 @@ async def admin_page(token: str = ""):
     cfg = bot_config.load_config()
     return ADMIN_HTML.replace("__CONFIG__", _json.dumps(cfg, ensure_ascii=False)) \
                      .replace("__LABELS__", _json.dumps(FEATURE_LABELS, ensure_ascii=False)) \
+                     .replace("__ICONS__", _json.dumps(FEATURE_ICONS, ensure_ascii=False)) \
+                     .replace("__DESCS__", _json.dumps(FEATURE_DESC, ensure_ascii=False)) \
                      .replace("__TOKEN__", _json.dumps(token))
 
 
@@ -734,52 +736,139 @@ async def admin_save(request: Request, token: str = ""):
     return JSONResponse(content={"status": "ok"})
 
 
+FEATURE_ICONS = {
+    "todo": "📋",
+    "mom_photo": "👵",
+    "photo_archive": "📸",
+}
+
+FEATURE_DESC = {
+    "todo": "行事曆、待辦與每日早安推播",
+    "mom_photo": "依媽媽的 user_id 觸發，不限群組",
+    "photo_archive": "群組照片自動歸檔到 Google Drive",
+}
+
 ADMIN_HTML = """<!DOCTYPE html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DoubleA Bot Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DoubleA Bot</title>
 <style>
-body{font-family:-apple-system,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;background:#fafafa}
-h1{font-size:1.4rem} h2{font-size:1.1rem;margin-top:2rem}
-.card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:1rem;margin:.8rem 0}
-.feature-head{display:flex;justify-content:space-between;align-items:center}
-label.chat{display:block;margin:.3rem 0 .3rem 1rem}
-input[type=text]{width:12rem;padding:.2rem}
-button{background:#06c755;color:#fff;border:none;border-radius:6px;padding:.6rem 1.4rem;font-size:1rem;cursor:pointer}
-.toggle{width:2.6rem;height:1.5rem}
-#msg{margin-left:1rem;color:#06c755}
+:root{
+  --bg:#f4f5f7; --card:#ffffff; --text:#1c1c1e; --text2:#6e6e73;
+  --line:#e5e5ea; --accent:#06c755; --accent-soft:rgba(6,199,85,.12);
+  --chip:#f0f0f3; --chip-on:var(--accent-soft); --shadow:0 1px 3px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#000; --card:#1c1c1e; --text:#f2f2f7; --text2:#98989e;
+    --line:#2c2c2e; --accent:#30d158; --accent-soft:rgba(48,209,88,.18);
+    --chip:#2c2c2e; --chip-on:var(--accent-soft); --shadow:none;
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{
+  font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;
+  margin:0;background:var(--bg);color:var(--text);
+  padding:max(1rem,env(safe-area-inset-top)) 1rem calc(6rem + env(safe-area-inset-bottom));
+}
+main{max-width:640px;margin:0 auto}
+header{display:flex;align-items:baseline;gap:.6rem;margin:1rem .2rem 1.4rem}
+header h1{font-size:1.5rem;font-weight:700;letter-spacing:-.02em;margin:0}
+header .sub{color:var(--text2);font-size:.85rem}
+h2{font-size:.8rem;font-weight:600;color:var(--text2);letter-spacing:.08em;
+   text-transform:uppercase;margin:1.8rem .4rem .6rem}
+.card{background:var(--card);border-radius:16px;padding:1rem 1.1rem;margin:.65rem 0;
+      box-shadow:var(--shadow);border:1px solid var(--line)}
+.card.off{opacity:.55}
+.feature-head{display:flex;justify-content:space-between;align-items:center;gap:.8rem}
+.feature-title{display:flex;align-items:center;gap:.65rem;min-width:0}
+.feature-icon{font-size:1.35rem;line-height:1}
+.feature-name{font-weight:600;font-size:1.02rem}
+.feature-desc{color:var(--text2);font-size:.8rem;margin-top:.15rem}
+/* iOS toggle */
+.switch{position:relative;flex-shrink:0;width:51px;height:31px}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:var(--line);border-radius:31px;transition:.25s;cursor:pointer}
+.slider:before{content:"";position:absolute;height:27px;width:27px;left:2px;top:2px;
+  background:#fff;border-radius:50%;transition:.25s;box-shadow:0 2px 4px rgba(0,0,0,.2)}
+.switch input:checked + .slider{background:var(--accent)}
+.switch input:checked + .slider:before{transform:translateX(20px)}
+/* chat chips */
+.chips{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.9rem}
+.chip{border:1px solid var(--line);background:var(--chip);color:var(--text2);
+  border-radius:999px;padding:.42rem .85rem;font-size:.85rem;cursor:pointer;
+  transition:.15s;user-select:none;display:flex;align-items:center;gap:.35rem}
+.chip.on{background:var(--chip-on);border-color:var(--accent);color:var(--text);font-weight:500}
+.chip.on:before{content:"✓";color:var(--accent);font-weight:700}
+/* known chats */
+.chat-row{display:flex;flex-direction:column;gap:.45rem}
+.chat-meta{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.badge{font-size:.68rem;font-weight:600;padding:.14rem .5rem;border-radius:6px;
+  background:var(--chip);color:var(--text2);text-transform:uppercase;letter-spacing:.04em}
+.chat-name{font-weight:600;font-size:.98rem}
+.chat-id{color:var(--text2);font-size:.72rem;font-family:ui-monospace,monospace;word-break:break-all}
+.chat-row input[type=text]{
+  width:100%;border:1px solid var(--line);border-radius:10px;background:var(--bg);
+  color:var(--text);padding:.55rem .75rem;font-size:.9rem;outline:none}
+.chat-row input[type=text]:focus{border-color:var(--accent)}
+.chat-row input[type=text]::placeholder{color:var(--text2)}
+/* save bar */
+.savebar{position:fixed;left:0;right:0;bottom:0;
+  padding:.8rem 1rem calc(.8rem + env(safe-area-inset-bottom));
+  background:color-mix(in srgb,var(--bg) 82%,transparent);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border-top:1px solid var(--line)}
+.savebar-inner{max-width:640px;margin:0 auto;display:flex;align-items:center;gap:1rem}
+button.save{flex:1;background:var(--accent);color:#fff;border:none;border-radius:14px;
+  padding:.85rem;font-size:1.02rem;font-weight:600;cursor:pointer;transition:.15s}
+button.save:active{transform:scale(.98);opacity:.9}
+#msg{font-size:.9rem;color:var(--accent);min-width:4.5rem;text-align:center}
 </style></head><body>
-<h1>🤖 DoubleA Bot Dashboard</h1>
+<main>
+<header><h1>🤖 DoubleA Bot</h1><span class="sub">功能控制台</span></header>
+<h2>功能</h2>
 <div id="features"></div>
 <h2>已知群組</h2>
 <div id="chats"></div>
-<button onclick="save()">儲存</button><span id="msg"></span>
+</main>
+<div class="savebar"><div class="savebar-inner">
+<button class="save" onclick="save()">儲存變更</button><span id="msg"></span>
+</div></div>
 <script>
 const cfg = __CONFIG__;
 const labels = __LABELS__;
+const icons = __ICONS__;
+const descs = __DESCS__;
 const token = __TOKEN__;
 
 function esc(s){return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function chatLabel(id){
   const c = cfg.known_chats[id] || {};
-  return (c.note || c.name || id) + " (" + id.slice(0,8) + "…)";
+  return c.note || c.name || (id.slice(0,10) + "…");
 }
 function render(){
   const f = document.getElementById("features");
   f.innerHTML = "";
   for(const [name, feat] of Object.entries(cfg.features)){
-    const card = document.createElement("div"); card.className = "card";
-    let html = `<div class="feature-head"><strong>${esc(labels[name]||name)}</strong>
-      <input class="toggle" type="checkbox" ${feat.enabled?"checked":""}
-        onchange="cfg.features['${esc(name)}'].enabled=this.checked"></div>`;
+    const card = document.createElement("div");
+    card.className = "card" + (feat.enabled ? "" : " off");
+    let html = `<div class="feature-head">
+      <div class="feature-title">
+        <span class="feature-icon">${esc(icons[name]||"⚙️")}</span>
+        <div><div class="feature-name">${esc(labels[name]||name)}</div>
+        <div class="feature-desc">${esc(descs[name]||"")}</div></div>
+      </div>
+      <label class="switch"><input type="checkbox" ${feat.enabled?"checked":""}
+        onchange="cfg.features['${esc(name)}'].enabled=this.checked;render()">
+      <span class="slider"></span></label></div>`;
     if(name !== "mom_photo"){
+      html += `<div class="chips">`;
       for(const id of Object.keys(cfg.known_chats)){
         const on = feat.chat_ids.includes(id);
-        html += `<label class="chat"><input type="checkbox" ${on?"checked":""}
-          onchange="toggleChat('${esc(name)}','${esc(id)}',this.checked)"> ${esc(chatLabel(id))}</label>`;
+        html += `<div class="chip${on?" on":""}"
+          onclick="toggleChat('${esc(name)}','${esc(id)}');render()">${esc(chatLabel(id))}</div>`;
       }
-    } else {
-      html += `<label class="chat">依媽媽的 user_id 觸發，不限群組</label>`;
+      html += `</div>`;
     }
     card.innerHTML = html; f.appendChild(card);
   }
@@ -787,19 +876,23 @@ function render(){
   ch.innerHTML = "";
   for(const [id, c] of Object.entries(cfg.known_chats)){
     const card = document.createElement("div"); card.className = "card";
-    card.innerHTML = `<code>${esc(id)}</code> [${esc(c.type)}] ${esc(c.name||"")}
-      備註：<input type="text" value="${esc(c.note||"")}"
-        onchange="cfg.known_chats['${esc(id)}'].note=this.value">`;
+    card.innerHTML = `<div class="chat-row">
+      <div class="chat-meta"><span class="badge">${esc(c.type)}</span>
+        <span class="chat-name">${esc(c.name || c.note || "未命名")}</span></div>
+      <div class="chat-id">${esc(id)}</div>
+      <input type="text" placeholder="加上備註，例如：出遊群組" value="${esc(c.note||"")}"
+        onchange="cfg.known_chats['${esc(id)}'].note=this.value">
+    </div>`;
     ch.appendChild(card);
   }
 }
-function toggleChat(f, id, on){
+function toggleChat(f, id){
   const arr = cfg.features[f].chat_ids;
-  if(on && !arr.includes(id)) arr.push(id);
-  if(!on) cfg.features[f].chat_ids = arr.filter(x=>x!==id);
+  if(arr.includes(id)) cfg.features[f].chat_ids = arr.filter(x=>x!==id);
+  else arr.push(id);
 }
 async function save(){
-  const r = await fetch(`/admin/config?token=${token}`, {
+  const r = await fetch(`/admin/config?token=${encodeURIComponent(token)}`, {
     method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify(cfg)});
   document.getElementById("msg").textContent = r.ok ? "已儲存 ✓" : "失敗！";
